@@ -1,0 +1,12 @@
+# Python / ML Project
+__pycache__/
+*.pyc
+*.pkl
+models/
+results/
+plots/
+*.csv
+*.xlsx
+.DS_Store
+.env
+.ipynb_checkpoints/
