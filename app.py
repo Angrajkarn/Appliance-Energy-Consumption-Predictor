@@ -263,6 +263,7 @@ def load_raw(path="energydata_complete.csv"):
 @st.cache_resource(show_spinner=False)
 def load_models():
     model_files = {
+        "Stacking Ensemble": "models/stacking_regressor.pkl",
         "LightGBM (Tuned)": "models/lightgbm_tuned.pkl",
         "LightGBM":         "models/lightgbm.pkl",
         "XGBoost":          "models/xgboost.pkl",
@@ -315,6 +316,8 @@ with st.sidebar:
         "🔍 Feature Analysis",
         "🤖 Model Performance",
         "🎯 Live Prediction",
+        "🚨 Anomaly Explorer",
+        "💡 Optimization Simulator",
         "📈 Time-Series Deep Dive",
         "🧠 Model Explainability"
     ], label_visibility="collapsed")
@@ -826,8 +829,151 @@ elif "Prediction" in page:
         st.plotly_chart(fig_gauge, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────
-# PAGE: TIME-SERIES DEEP DIVE
+# PAGE: ANOMALY EXPLORER
 # ─────────────────────────────────────────────────────────────────────
+elif "Anomaly Explorer" in page:
+    st.markdown('<div class="section-header">🚨 Unsupervised Anomaly Detection</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-box">Using an <b>Isolation Forest</b> algorithm to detect unusual energy consumption spikes based on multivariate sensor relationships.</div>', unsafe_allow_html=True)
+
+    if os.path.exists("models/isolation_forest.pkl"):
+        iso_forest = joblib.load("models/isolation_forest.pkl")
+        
+        # We need to scale df_eng just like we scaled X_train
+        _, scaler = load_models()
+        if scaler:
+            X_all_sc = scaler.transform(X_all)
+            preds = iso_forest.predict(X_all_sc)
+            
+            # Map predictions
+            df_anomaly = df_raw.copy()
+            df_anomaly["is_anomaly"] = preds == -1
+            
+            total_anomalies = df_anomaly["is_anomaly"].sum()
+            st.markdown(f"**Found {total_anomalies} anomalous periods** ({total_anomalies/len(df_anomaly):.1%}) in the entire dataset.")
+            
+            # Scatter Plot of anomalies
+            fig = px.scatter(df_anomaly, x="date", y="Appliances", color="is_anomaly",
+                             color_discrete_map={False: "#6C63FF", True: "#FF6B6B"},
+                             title="Energy Spikes flagged as Anomalies (Red)",
+                             labels={"date": "Date", "Appliances": "Energy (Wh)", "is_anomaly": "Anomaly?"})
+            fig.update_layout(**PLOTLY_THEME)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Distribution comparison
+            col_a, col_b = st.columns(2)
+            with col_a:
+                fig_box1 = px.box(df_anomaly, x="is_anomaly", y="Appliances", color="is_anomaly",
+                                  color_discrete_map={False: "#6C63FF", True: "#FF6B6B"},
+                                  title="Appliance Energy (Normal vs Anomaly)")
+                fig_box1.update_layout(**PLOTLY_THEME, showlegend=False)
+                st.plotly_chart(fig_box1, use_container_width=True)
+            with col_b:
+                # Average Indoor Temp vs Anomaly
+                df_anomaly["avg_temp"] = df_anomaly[[c for c in df_anomaly.columns if c.startswith("T") and c[1:].isdigit()]].mean(axis=1)
+                fig_box2 = px.box(df_anomaly, x="is_anomaly", y="avg_temp", color="is_anomaly",
+                                  color_discrete_map={False: "#6C63FF", True: "#FF6B6B"},
+                                  title="Average Indoor Temp (Normal vs Anomaly)")
+                fig_box2.update_layout(**PLOTLY_THEME, showlegend=False)
+                st.plotly_chart(fig_box2, use_container_width=True)
+                
+    else:
+        st.warning("⚠️ Isolation Forest model not found. Run `python run_pipeline.py` first.")
+
+# ─────────────────────────────────────────────────────────────────────
+# PAGE: OPTIMIZATION SIMULATOR (WHAT-IF)
+# ─────────────────────────────────────────────────────────────────────
+elif "Optimization Simulator" in page:
+    st.markdown('<div class="section-header">💡 Prescriptive Analytics: "What-If" Simulator</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-box">Simulate the impact of global household changes (e.g., lowering thermostats) over an entire month to estimate total energy and cost savings.</div>', unsafe_allow_html=True)
+
+    models, scaler = load_models()
+    if not models:
+        st.warning("⚠️ No trained models found. Run `python run_pipeline.py` first.")
+    else:
+        best_model_name = "Stacking Ensemble" if "Stacking Ensemble" in models else ("LightGBM (Tuned)" if "LightGBM (Tuned)" in models else list(models.keys())[0])
+        sim_model = models[best_model_name]
+        st.markdown(f"*(Using **{best_model_name}** for simulation)*")
+        
+        # User input for simulation parameters
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            st.markdown("**🌡️ Temperature Adjustment**")
+            temp_adj = st.slider("Change all indoor temperatures by (°C):", -5.0, 5.0, -1.0, 0.5)
+        with col_s2:
+            st.markdown("**💡 Lights Optimization**")
+            light_mult = st.slider("Reduce lighting energy by (%):", 0, 100, 20, 5)
+
+        if st.button("🚀 Run 1-Month Simulation", type="primary"):
+            with st.spinner("Simulating..."):
+                # Take last 30 days of data for simulation
+                df_sim_raw = df_eng.tail(30 * 144).copy()
+                X_base = df_sim_raw[FEATURE_COLS].copy()
+                
+                # Base Predictions
+                if any(m in best_model_name for m in ["Ridge", "SVR", "MLP", "Linear Regression", "Lasso"]) and scaler is not None:
+                    base_preds = sim_model.predict(scaler.transform(X_base))
+                else:
+                    base_preds = sim_model.predict(X_base)
+                base_preds = np.maximum(0, base_preds)
+                
+                # Apply Modifications
+                X_mod = X_base.copy()
+                # Adjust temperatures
+                temp_features = [c for c in X_mod.columns if c.startswith("T") and c[1:].isdigit()]
+                for tc in temp_features:
+                    X_mod[tc] = X_mod[tc] + temp_adj
+                
+                # Adjust lights
+                X_mod["lights"] = X_mod["lights"] * (1 - (light_mult/100))
+                X_mod["lights_x_hour"] = X_mod["lights"] * X_mod["hour"]
+                
+                # Adjust differentials and interactions (simplified updates)
+                X_mod["avg_indoor_temp"] = X_mod["avg_indoor_temp"] + temp_adj
+                for tc in temp_features:
+                    if f"dT_{tc}_out" in X_mod.columns: X_mod[f"dT_{tc}_out"] = X_mod[tc] - X_mod["T_out"]
+                    if f"dT_{tc}_T1" in X_mod.columns: X_mod[f"dT_{tc}_T1"] = X_mod[tc] - X_mod["T1"]
+                
+                # Mod Predictions
+                if any(m in best_model_name for m in ["Ridge", "SVR", "MLP", "Linear Regression", "Lasso"]) and scaler is not None:
+                    mod_preds = sim_model.predict(scaler.transform(X_mod))
+                else:
+                    mod_preds = sim_model.predict(X_mod)
+                mod_preds = np.maximum(0, mod_preds)
+                
+                # Calculate Savings
+                total_base_wh = np.sum(base_preds)
+                total_mod_wh = np.sum(mod_preds)
+                saved_wh = total_base_wh - total_mod_wh
+                saved_kwh = saved_wh / 1000
+                savings_pct = (saved_wh / total_base_wh) * 100
+                saved_money = saved_kwh * 0.12 # $0.12 / kWh
+                
+                # Results UI
+                st.markdown("### 📊 Simulation Results (30 Days)")
+                r_c1, r_c2, r_c3 = st.columns(3)
+                with r_c1:
+                    st.metric("Total Energy Saved", f"{saved_kwh:.1f} kWh", f"{savings_pct:.1f}%")
+                with r_c2:
+                    st.metric("Estimated Cost Savings", f"${saved_money:.2f}", "per month")
+                with r_c3:
+                    carbon = saved_kwh * 0.385 # ~0.385 kg CO2 per kWh
+                    st.metric("CO₂ Emissions Prevented", f"{carbon:.1f} kg", "🌱")
+                
+                # Plot differences
+                plot_df = pd.DataFrame({
+                    "Date": df_raw["date"].tail(30*144).reset_index(drop=True),
+                    "Baseline": base_preds,
+                    "Simulated": mod_preds
+                })
+                # Resample daily for visualization
+                plot_df["Day"] = plot_df["Date"].dt.date
+                daily_sim = plot_df.groupby("Day")[["Baseline", "Simulated"]].sum().reset_index()
+                
+                fig_sim = go.Figure()
+                fig_sim.add_trace(go.Scatter(x=daily_sim["Day"], y=daily_sim["Baseline"], mode="lines", name="Baseline (Original)", line=dict(color="#FF6B6B")))
+                fig_sim.add_trace(go.Scatter(x=daily_sim["Day"], y=daily_sim["Simulated"], mode="lines", name="Simulated (Optimized)", line=dict(color="#00C9A7"), fill="tonexty"))
+                fig_sim.update_layout(title="Daily Energy Consumption: Baseline vs Simulated", yaxis_title="Energy (Wh/day)", **PLOTLY_THEME)
+                st.plotly_chart(fig_sim, use_container_width=True)
 elif "Time-Series" in page:
     st.markdown('<div class="section-header">📈 Time-Series Deep Dive</div>', unsafe_allow_html=True)
 

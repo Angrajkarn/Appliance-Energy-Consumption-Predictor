@@ -41,7 +41,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, IsolationForest, StackingRegressor
 from sklearn.svm import SVR
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
@@ -495,6 +495,58 @@ res = evaluate("MLP Neural Network", y_test, pred_mlp)
 results.append(res)
 print(f"R²={res['R²']:.4f}  [{time.time()-t0:.1f}s]")
 joblib.dump(mlp_model, "models/mlp.pkl")
+
+# ─────────────────────────────────────────────────────────────────────
+# STEP 6.5 — ADVANCED: ANOMALY DETECTION (Isolation Forest)
+# ─────────────────────────────────────────────────────────────────────
+print("\n" + "="*65)
+print("  STEP 6.5 | ADVANCED: ANOMALY DETECTION (Isolation Forest)")
+print("="*65)
+print("  Training Isolation Forest for anomaly detection ...", end=" ")
+t0 = time.time()
+iso_forest = IsolationForest(contamination=0.01, random_state=42, n_jobs=-1)
+# Fit on the entire dataset (or just train, but usually done on full to find historical anomalies)
+# To avoid data leakage, we fit on train and predict on full later in app, or fit on X_train.
+iso_forest.fit(X_train_sc)
+# Predict anomalies on Test set (-1 is anomaly, 1 is normal)
+pred_anomalies = iso_forest.predict(X_test_sc)
+anomaly_count = np.sum(pred_anomalies == -1)
+print(f"[{time.time()-t0:.1f}s]  Found {anomaly_count} anomalies in test set.")
+joblib.dump(iso_forest, "models/isolation_forest.pkl")
+
+# ─────────────────────────────────────────────────────────────────────
+# STEP 6.6 — ADVANCED: STACKING META-ENSEMBLE
+# ─────────────────────────────────────────────────────────────────────
+print("\n" + "="*65)
+print("  STEP 6.6 | ADVANCED: STACKING META-ENSEMBLE")
+print("="*65)
+if LGB_OK and XGB_OK:
+    print("  Training Stacking Regressor (LightGBM + XGBoost + Ridge -> Ridge) ...", end=" ")
+    t0 = time.time()
+    
+    estimators = [
+        ('lgb', lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31, random_state=42, verbosity=-1)),
+        ('xgb', xgb.XGBRegressor(n_estimators=300, learning_rate=0.05, max_depth=5, random_state=42, verbosity=0)),
+        ('ridge', Ridge(alpha=10.0))
+    ]
+    
+    stack_model = StackingRegressor(
+        estimators=estimators,
+        final_estimator=Ridge(alpha=1.0),
+        cv=3,
+        n_jobs=-1
+    )
+    
+    # StackingRegressor handles its own internal CV, so we fit on train
+    stack_model.fit(X_train_sc, y_train)
+    pred_stack = stack_model.predict(X_test_sc)
+    
+    res = evaluate("Stacking Ensemble", y_test, pred_stack)
+    results.append(res)
+    print(f"R²={res['R²']:.4f}  [{time.time()-t0:.1f}s]")
+    joblib.dump(stack_model, "models/stacking_regressor.pkl")
+else:
+    print("  [WARN] Skipping Stacking (requires both LightGBM and XGBoost).")
 
 # ─────────────────────────────────────────────────────────────────────
 # STEP 7 — OPTUNA HYPERPARAMETER TUNING (LightGBM)
