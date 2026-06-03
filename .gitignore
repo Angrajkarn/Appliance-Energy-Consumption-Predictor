@@ -6,12 +6,10 @@ __pycache__/
 venv/
 *.zip
 
-# Data and Models
-models/*.pkl
-results/*.npy
-energydata_complete.csv
-*.xlsx
+# Only exclude the giant Random Forest (122MB - over GitHub limit)
+models/random_forest.pkl
 
-# OS generated files
+# OS files
+*.xlsx
 .DS_Store
 Thumbs.db

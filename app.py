@@ -336,7 +336,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown("---")
-    pipeline_ran = os.path.exists("models/random_forest.pkl")
+    pipeline_ran = os.path.exists("models/lightgbm_tuned.pkl")
     if pipeline_ran:
         st.markdown('<span class="badge badge-green">✅ Models Trained</span>', unsafe_allow_html=True)
     else:
@@ -501,8 +501,8 @@ elif "Feature" in page:
 
     # ── Pairplot substitute ──────────────────────────────────────────
     st.markdown('<div class="section-header">🌡️ Temperature vs Energy</div>', unsafe_allow_html=True)
-    temp_cols = ["T1", "T2", "T3", "T6", "To"]
-    col_sel = st.selectbox("Select temperature sensor:", temp_cols)
+    temp_cols_sel = ["T1", "T2", "T3", "T6", "T_out"]
+    col_sel = st.selectbox("Select temperature sensor:", temp_cols_sel)
 
     fig_scatter = px.scatter(df_raw.sample(2000), x=col_sel, y="Appliances",
                               color="hour" if "hour" in df_raw.columns else None,
