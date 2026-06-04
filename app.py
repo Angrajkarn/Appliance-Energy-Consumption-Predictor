@@ -845,7 +845,7 @@ elif "Anomaly Explorer" in page:
             preds = iso_forest.predict(X_all_sc)
             
             # Map predictions
-            df_anomaly = df_raw.copy()
+            df_anomaly = df_eng.copy()
             df_anomaly["is_anomaly"] = preds == -1
             
             total_anomalies = df_anomaly["is_anomaly"].sum()
